@@ -44,7 +44,7 @@ use File::Find;
 
 ####### constants #######
 my $DEBUG = 0;
-my $DEFAULT_YEAR = 'YearPlz';
+my $DEFAULT_YEAR = '0000';
 my $VERSION = '0.5';
 my $ERASE_TOKENS = 'dvdrip|divx|scr|truefrench|hdrip|xvid|ts|brrip|'.
   'md|bdrip|repack|1cd|vf|vo|vostfr|vostr|vfstfr|vostfr|fr|cd\d+|disk\d+|'.
@@ -56,7 +56,7 @@ my $ERASE_TOKENS = 'dvdrip|divx|scr|truefrench|hdrip|xvid|ts|brrip|'.
 # options
 my %opts = (
 	    # default recasing
-	    'c' => 'low',
+	    'c' => 'none',
 	    # character used for white space
 	    's' => '.',
 	    # character used for title, year, etc.. separator
@@ -73,7 +73,7 @@ my $g_last_dir = "";
 ############# MAIN ###############
 
 ### options processing ###
-unless (getopts('nrqfpDY:I:c:s:d:g:w:Vh', \%opts)) {
+unless (getopts('nrqfpDPY:I:c:s:d:g:w:Vh', \%opts)) {
   usage();
   exit 1;
 }
@@ -182,18 +182,20 @@ sub remove_bad_ass {
   my $_ = shift;
   print STDERR "remove_bad_ass:0: $_\n" if ($DEBUG);
 
-  # text in braces are 99% useless
-  my @reb = (
-	     qr/\[[^]]*\]/,
-	     qr/{[^}]*}/,
-	     qr/\([^)]*\)/,
-	     qr/«[^»]*»/,
-	     qr/‘[^’]*’/,
-	    );
-  foreach my $re(@reb) {
-    s/$re//g while (m/$re/);
+  if ($opts{P}) {
+    # text in braces are 99% useless
+    my @reb = (
+	       qr/\[[^]]*\]/,
+	       qr/{[^}]*}/,
+	       qr/\([^)]*\)/,
+	       qr/«[^»]*»/,
+	       qr/‘[^’]*’/,
+	      );
+    foreach my $re (@reb) {
+      s/$re//g while (m/$re/);
+    }
+    print STDERR "remove_bad_ass:10: $_\n" if ($DEBUG);
   }
-  print STDERR "remove_bad_ass:10: $_\n" if ($DEBUG);
 
   # ASCII only
   s/\351/é/g;
@@ -434,9 +436,10 @@ OPTIONS
                 Mainly usefull in print mode (-p).
  -p             Print mode: print modified filenames instead of rename files.
  -D             normaliz directory too (occur after files rename).
+ -P             Remove content of parentheses pair (), [], {}, etc...
  -Y <year>      year placeholder if no year found.
  -I <imdb>      ImdbId placeholder if no id found.
- -c <case>      change case: none, up, low, camel (default: “low”)
+ -c <case>      change case: none, up, low, camel (default: “none”, no change)
  -s <char>      white space and invalid characters (see -g) will be
                 converted to this character (default is “.”).
  -d <char>      character that delimit filename fields (default is “_”).
@@ -447,5 +450,3 @@ OPTIONS
  -h             this help.
 EOF
 }
-
-
