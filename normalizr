@@ -1,0 +1,451 @@
+#!/usr/bin/env perl
+
+
+# Copyright (c) 2012, xakz <xakz@sdf.lonestar.org>, All rights reserved.
+
+# Authors: xakz <xakz@sdf.lonestar.org>
+
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+
+#    1. Redistributions of source code must retain the above copyright notice,
+#       this list of conditions and the following disclaimer.
+
+#    2. Redistributions in binary form must reproduce the above copyright
+#       notice, this list of conditions and the following disclaimer in the
+#       documentation and/or other materials provided with the distribution.
+
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR(S) AS IS'' AND ANY EXPRESS
+# OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF
+# USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
+# OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+
+# The views and conclusions contained in the software and
+# documentation are those of the authors and should not be interpreted
+# as representing official policies, either expressed or implied, of
+# author(s).
+
+
+use strict;
+use warnings;
+use feature qw(unicode_strings);
+
+use Getopt::Std;
+use File::Basename;
+use File::Find;
+
+####### constants #######
+my $DEBUG = 0;
+my $DEFAULT_YEAR = 'YearPlz';
+my $VERSION = '0.5';
+my $ERASE_TOKENS = 'dvdrip|divx|scr|truefrench|hdrip|xvid|ts|brrip|'.
+  'md|bdrip|repack|1cd|vf|vo|vostfr|vostr|vfstfr|vostfr|fr|cd\d+|disk\d+|'.
+  'dvd\d+|dvd';
+
+
+####### globals #######
+
+# options
+my %opts = (
+	    # default recasing
+	    'c' => 'low',
+	    # character used for white space
+	    's' => '.',
+	    # character used for title, year, etc.. separator
+	    'd' => '_',
+	    # valid char regex
+	    'g' => '-a-zA-Z0-9\+#',
+	    # word char regex
+	    'w' => '-a-zA-Z0-9\+#',
+	   );
+
+# last virtual working directory
+my $g_last_dir = "";
+
+############# MAIN ###############
+
+### options processing ###
+unless (getopts('nrqfpDY:I:c:s:d:g:w:Vh', \%opts)) {
+  usage();
+  exit 1;
+}
+if ($DEBUG) {
+  print STDERR '$opts: ';
+  for (keys(%opts)) {
+    print STDERR "$_ => " . $opts{$_} . "\n";
+  }
+}
+version(), exit 0 if ($opts{V});
+usage(), exit 0 if ($opts{h});
+
+# cleanup some options
+$opts{s} = substr($opts{s}, 0, 1);
+$opts{d} = substr($opts{d}, 0, 1);
+$opts{q} = undef if ($opts{n});
+if ($opts{c} and $opts{c} !~ /^(none|low|up|camel)$/) {
+  print STDERR "Unknow case type: " . $opts{c} . "\n";
+  usage();
+  exit 1;
+}
+
+### real start ###
+
+# build lists
+my @list = parse_filelist();
+
+my @dlist = grep(-d, @list);
+my @flist = ();
+if ($opts{f}) {
+  @flist = @list;
+} else {
+  @flist = grep(-f, @list);
+}
+
+# if recursive mode, expand the list, and append new file
+# in dlist or flist global vars. (see divide_file() below)
+if ($opts{r}) {
+  find(\&divide_file, @dlist);
+}
+
+# check list have content
+if ((!@flist and !$opts{D}) or (!@flist and !@dlist and $opts{D})) {
+  print STDERR "Nothing to do. Check options and parameters (-r is maybe missing).\n" if (!$opts{q});
+  exit 8;
+}
+
+# normaliz file
+for (@flist) {
+  if ($opts{p}) {
+    print normaliz($_) . "\n";
+  } else {
+    rename_file($_, normaliz($_));
+  }
+}
+
+# normaliz directories
+if ($opts{D}) {
+  for (@dlist) {
+    if ($opts{p}) {
+      print normaliz($_) . "\n";
+    } else {
+      rename_file($_, normaliz($_));
+    }
+  }
+}
+
+################### FUNCTIONS ##################
+
+sub normaliz {
+  my $origin = shift;
+
+  my %parts = extract_filename_parts($origin);
+  my $title = remove_bad_ass($parts{title});
+  my $year = $parts{year};
+  my $imdbid = $parts{imdbid};
+
+  # correcting case
+  $title = recase_string($title);
+
+  # set placeholder if any
+  if (defined $opts{Y} and !defined $year) {
+    $year = $opts{Y};
+  }
+  if (defined $opts{I} and !defined $imdbid) {
+    $imdbid = $opts{I};
+  }
+
+  # rebuild final filename
+  my $renamed = $parts{folder} . $title;
+  $renamed .= $opts{s} . 'part' . $parts{part} if (defined $parts{part});
+  $renamed .= $opts{d} . $year if (defined $year);
+  $renamed .= $opts{d} . $imdbid if (defined $imdbid);
+  $renamed .= $parts{ext};
+
+  return $renamed;
+}
+
+#########################
+# Cleanup the string using many regex
+# non ascii char will be converted to ascii equivalent.
+# braces and quotes, and their content are removed.
+# remaining invalid char replaced by white space char (opt -s).
+# and some other cleanup...
+sub remove_bad_ass {
+  my $_ = shift;
+  print STDERR "remove_bad_ass:0: $_\n" if ($DEBUG);
+
+  # text in braces are 99% useless
+  my @reb = (
+	     qr/\[[^]]*\]/,
+	     qr/{[^}]*}/,
+	     qr/\([^)]*\)/,
+	     qr/«[^»]*»/,
+	     qr/‘[^’]*’/,
+	    );
+  foreach my $re(@reb) {
+    s/$re//g while (m/$re/);
+  }
+  print STDERR "remove_bad_ass:10: $_\n" if ($DEBUG);
+
+  # ASCII only
+  s/\351/é/g;
+  s/\350/è/g;
+  s/é|ê|è|ë/e/g;
+  s/á|â|à|ă|ä|å/a/g;
+  s/í|î|ì|ĩ|ï/i/g;
+  s/ó|ô|ò|õ|ö|ð/o/g;
+  s/ú|û|ù|ũ|ü/u/g;
+  s/ý|ŷ|ỳ|ỹ|ÿ/y/g;
+  y/ßŋħĸł¢µçñ/sghklcmcn/;
+  s/œ/oe/g;
+  s/æ/ae/g;
+  print STDERR "remove_bad_ass:20: $_\n" if ($DEBUG);
+
+  s/É|Ê|È|Ë/E/g;
+  s/Á|Â|À|Ă|Ä|Å/A/g;
+  s/Í|Î|Ì|Ĩ|Ï/I/g;
+  s/Ó|Ô|Ò|Õ|Ö|Ð/O/g;
+  s/Ú|Û|Ù|Ũ|Ü/U/g;
+  s/Ý|Ŷ|Ỳ|Ỹ|ÿ/Y/g;
+  y/ßŊĦĸŁ¢µÇÑ/SGHKLCMCN/;
+  s/Œ/OE/g;
+  s/Æ/AE/g;
+  print STDERR "remove_bad_ass:30: $_\n" if ($DEBUG);
+
+  # replace remaining invalid chars with white space char
+  s/[^$opts{g}]+/$opts{s}/g;
+  print STDERR "remove_bad_ass:40: $_\n" if ($DEBUG);
+
+  # some frequent patterns, all following text are 99% not part of the title
+  s/^(.+?)\b($ERASE_TOKENS)\b.*$/$1/ig while (/\b($ERASE_TOKENS)\b/i);
+  print STDERR "remove_bad_ass:50: $_\n" if ($DEBUG);
+
+  # reduce multiple white space char
+  s/[$opts{s}]+/$opts{s}/g;
+  print STDERR "remove_bad_ass:60: $_\n" if ($DEBUG);
+
+  # remove '.-.' pattern and derived
+  s/([$opts{s}]-[$opts{s}]?|-[$opts{s}])/$opts{s}/g;
+  print STDERR "remove_bad_ass:70: $_\n" if ($DEBUG);
+
+  # remove trailing or prefix dots or dash
+  s/^([$opts{s}]|-)+//;
+  s/([$opts{s}]|-)+$//;
+  print STDERR "remove_bad_ass:80: $_\n" if ($DEBUG);
+
+  # if finished by .french or .fr or like, 99% chance that is the language
+  s/\b(french|
+      fr|
+      english|
+      en)$//ixg;
+  print STDERR "remove_bad_ass:90: $_\n" if ($DEBUG);
+
+  # reduce multiple white space char
+  s/[$opts{s}]+/$opts{s}/g;
+  print STDERR "remove_bad_ass:60: $_\n" if ($DEBUG);
+
+  # remove '.-.' pattern and derived
+  s/([$opts{s}]-[$opts{s}]?|-[$opts{s}])/$opts{s}/g;
+  print STDERR "remove_bad_ass:70: $_\n" if ($DEBUG);
+
+  # remove trailing or prefix dots or dash
+  s/^([$opts{s}]|-)+//;
+  s/([$opts{s}]|-)+$//;
+  print STDERR "remove_bad_ass:80: $_\n" if ($DEBUG);
+
+  return $_;
+}
+
+sub extract_filename_parts {
+  my $origin = shift;
+
+  # extract filename parts
+  my ($file, $folder, $ext) = fileparse($origin, qr/\.[^.]+$/);
+
+  my $title = $file;
+  my $year = undef;
+  my $imdbid = undef;
+  my $part = undef;
+
+  # find some part data
+  if ($title =~ /\b(cd|disk)(\d+)\b/i) {
+    $part = $2;
+  }
+
+  # extract title if filename is a std name
+  if ($title =~ /^(.*)_(\d{4})(_(\d+))?$/) {
+    $title = $1;
+    $year = $2;
+    $imdbid = $4;
+  } elsif ($title =~ /^(.*?)\D((19|20)\d{2})(\D.*|)$/) {
+    # non standard filename, extract title and year (if exists)
+    $title = $1;
+    $year = $2;
+  }
+  return (folder => $folder,
+	  title => $title,
+	  year => $year,
+	  imdbid => $imdbid,
+	  part => $part,
+	  ext => lc $ext);
+}
+
+sub recase_string {
+  my $_ = shift;
+  print STDERR "recase_string:0: $_\n" if ($DEBUG);
+
+  # case handling
+  if ($opts{c} and $opts{c} eq 'low') {
+    $_ = lc;
+  } elsif ($opts{c} and $opts{c} eq 'up') {
+    $_ = uc;
+  } elsif ($opts{c} and $opts{c} eq 'camel') {
+    # CamelCase, dont upcase if only one letter in the token: «if (/..+/)»
+    $_ = join($opts{s},
+	      map {$_ = lc; $_ = (/..+/) ? ucfirst : $_ }
+	      split /[^$opts{w}]+/);
+  }
+  print STDERR "recase_string:10: $_\n" if ($DEBUG);
+
+  return $_;
+}
+
+
+sub rename_file {
+  my $from = shift;
+  my $to = shift;
+
+  my $bfrom = basename($from);
+  my $bto = basename($to);
+  return 1 if ($bfrom eq $bto);
+
+  my $dfrom = dirname($from);
+  my $dto = dirname($to);
+
+  if (-e $to) {
+    print STDERR "\033[1;31mWARNING\033[0m: ".
+      "cannot rename $from to $to: $to already exists.\n";
+    return 0;
+  }
+
+  if (!$opts{q}) {
+    if ($g_last_dir ne $dfrom and $dfrom eq $dto) {
+      $g_last_dir = $dfrom;
+      print STDERR "\033[33m*** in \033[34m$dfrom\033[33m ***\n";
+    }
+    if ($dfrom eq $dto) {
+      print STDERR "  \033[33mrenaming \033[34m".$bfrom.
+	"\033[33m to \033[36m".$bto."\033[0m\n";
+    } else {
+      print STDERR "\033[33mrenaming \033[34m".$from.
+	"\033[33m to \033[36m".$to."\033[0m\n";
+    }
+  }
+
+  if (!$opts{n}) {
+    return rename $from, $to;
+  } else {
+    return 1;
+  }
+}
+
+sub parse_list_from_stdin {
+  my @list;
+  #binmode(STDIN, ":encoding(utf8)");
+  while (<STDIN>) {
+    chomp;
+    push @list, $_;
+  }
+  return @list;
+}
+
+sub parse_filelist {
+  my @list;
+
+  if (@ARGV) {
+    for (@ARGV) {
+      if ($_ eq '-') {
+	push @list, parse_list_from_stdin();
+      } else {
+	push @list, $_;
+      }
+    }
+  } else {
+    push @list, '.';
+  }
+
+  return @list;
+}
+
+###########
+# callback for File::Find, used in recursive usage
+# put each file in the right list.
+sub divide_file {
+  push @flist, $File::Find::name if (-f);
+  push @dlist, $File::Find::name if (-d);
+}
+
+
+
+############################ aesthetic functions ###################
+sub version {
+  my $name = basename($0);
+  print <<EOF;
+Copyright (c) 2012, xakz <xakz\@sdf.lonestar.org>, All rights reserved.
+
+\033[1;37m$name\033[0m version \033[1;37m$VERSION\033[0m
+
+see source code for informations about copying.
+EOF
+
+}
+
+sub usage {
+  print <<EOF;
+
+SYNOPSIS
+ normalizr [flags] [FILENAMES]
+
+DESCRIPTION
+ this tool correct filenames, mainly movie filenames.
+ Give filenames on the command-line or
+ pipe filenames list, one by line.
+
+ Mix filenames in stdin and on the command-line using
+ “-” as filename in parameters.
+
+ ex: find my_movies/news | normalizr 'The BOAT.avi' warrior.avi - bob.avi
+
+ “-” will be replaced by the file list yield by find.
+
+OPTIONS
+ -n             dry-run.
+ -r             recursive.
+ -q             be quiet.
+ -f             Don't check if file exists.
+                Mainly usefull in print mode (-p).
+ -p             Print mode: print modified filenames instead of rename files.
+ -D             normaliz directory too (occur after files rename).
+ -Y <year>      year placeholder if no year found.
+ -I <imdb>      ImdbId placeholder if no id found.
+ -c <case>      change case: none, up, low, camel (default: “low”)
+ -s <char>      white space and invalid characters (see -g) will be
+                converted to this character (default is “.”).
+ -d <char>      character that delimit filename fields (default is “_”).
+ -g <regex>     regex of valid (Good) chars. (default: “-a-zA-Z0-9”)
+ -w <regex>     regex of what is a word (mainly used for CamelCasing)
+                (defaults: “-a-zA-Z0-9”
+ -V             version info.
+ -h             this help.
+EOF
+}
+
+
