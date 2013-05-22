@@ -1,9 +1,9 @@
 #!/usr/bin/env perl
 
 
-# Copyright (c) 2012, xakz <xakz@sdf.lonestar.org>, All rights reserved.
+# Copyright (c) 2012, 2013, Maxime Chatelle, All rights reserved.
 
-# Authors: xakz <xakz@sdf.lonestar.org>
+# Authors: Maxime Chatelle <xakz@rxsoft.eu>
 
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -39,43 +39,71 @@ use warnings;
 use feature qw(unicode_strings);
 
 use Getopt::Std;
+use File::Spec::Functions;
 use File::Basename;
-use File::Find;
 
 ####### constants #######
 my $DEBUG = 0;
-my $DEFAULT_YEAR = '0000';
-my $VERSION = '0.5';
-my $ERASE_TOKENS = 'dvdrip|divx|scr|truefrench|hdrip|xvid|ts|brrip|'.
-  'md|bdrip|repack|1cd|vf|vo|vostfr|vostr|vfstfr|vostfr|fr|cd\d+|disk\d+|'.
-  'dvd\d+|dvd';
+my $VERSION = '0.7';
 
+# my $ERASE_TOKENS = 'dvdrip|divx|scr|truefrench|hdrip|xvid|ts|brrip|'.
+#   'md|bdrip|repack|1cd|vf|vo|vostfr|vostr|vfstfr|vostfr|fr|cd\d+|disk\d+|'.
+#   'dvd\d+|dvd';
 
 ####### globals #######
 
 # options
 my %opts = (
-	    # default recasing
-	    'c' => 'none',
 	    # character used for white space
 	    's' => '.',
-	    # character used for title, year, etc.. separator
-	    'd' => '_',
 	    # valid char regex
-	    'g' => '-a-zA-Z0-9\+#',
-	    # word char regex
-	    'w' => '-a-zA-Z0-9\+#',
+	    'g' => '-_a-zA-Z0-9\^\+!%@',
+	    # word char regex, border of filename allow only these, and for CamelCasing too
+	    'w' => 'a-zA-Z0-9',
 	   );
 
-# last virtual working directory
-my $g_last_dir = "";
+############################ aesthetic functions ###################
+sub usage {
+  print <<EOF;
 
-############# MAIN ###############
+SYNOPSIS
+ normalizr [OPTIONS] [FILENAMES]
 
-### options processing ###
-unless (getopts('nrqfpDPY:I:c:s:d:g:w:Vh', \%opts)) {
+DESCRIPTION
+ this tool correct file names.
+ Take file names from the command-line.
+
+OPTIONS
+ -n             Dry-run.
+ -r             Recursive.
+ -q             Be quiet.
+ -P             Remove content of parentheses pair (), [], {}, etc...
+ -U             Change case to UPCASE.
+ -D             Change case to downcase.
+ -s <char>      White space and invalid characters (see -g) will be
+                converted to this character (default is “$opts{s}”).
+ -g <regex>     Regex of valid (Good) chars. (default: “$opts{g}”)
+ -w <regex>     Regex of what is a word (defaults: “$opts{w}”
+ -V             version info.
+ -h             This help.
+EOF
+}
+
+sub version {
+  my $name = basename($0);
+  print <<EOF;
+\033[1;37m$name\033[0m version \033[1;37m$VERSION\033[0m
+Copyright (c) 2012, 2013, Maxime Chatelle, All rights reserved.
+Licensed under BSD 2 clauses license.
+See source code for licensing details.
+EOF
+
+}
+
+## options processing
+unless (getopts('nrqPUDs:g:w:Vh', \%opts)) {
   usage();
-  exit 1;
+  exit 4;
 }
 if ($DEBUG) {
   print STDERR '$opts: ';
@@ -86,90 +114,102 @@ if ($DEBUG) {
 version(), exit 0 if ($opts{V});
 usage(), exit 0 if ($opts{h});
 
-# cleanup some options
+## cleanup some options
 $opts{s} = substr($opts{s}, 0, 1);
-$opts{d} = substr($opts{d}, 0, 1);
 $opts{q} = undef if ($opts{n});
-if ($opts{c} and $opts{c} !~ /^(none|low|up|camel)$/) {
-  print STDERR "Unknow case type: " . $opts{c} . "\n";
+if ($opts{c} and $opts{c} !~ /^(none|low|up)$/) {
+  print STDERR "Unknown case type: " . $opts{c} . "\n";
   usage();
   exit 1;
 }
 
-### real start ###
-
-# build lists
-my @list = parse_filelist();
-
-my @dlist = grep(-d, @list);
-my @flist = ();
-if ($opts{f}) {
-  @flist = @list;
-} else {
-  @flist = grep(-f, @list);
-}
-
-# if recursive mode, expand the list, and append new file
-# in dlist or flist global vars. (see divide_file() below)
-if ($opts{r}) {
-  find(\&divide_file, @dlist);
-}
-
-# check list have content
-if ((!@flist and !$opts{D}) or (!@flist and !@dlist and $opts{D})) {
-  print STDERR "Nothing to do. Check options and parameters (-r is maybe missing).\n" if (!$opts{q});
-  exit 8;
-}
-
-# normaliz file
-for (@flist) {
-  if ($opts{p}) {
-    print normaliz($_) . "\n";
-  } else {
-    rename_file($_, normaliz($_));
-  }
-}
-
-# normaliz directories
-if ($opts{D}) {
-  for (@dlist) {
-    if ($opts{p}) {
-      print normaliz($_) . "\n";
-    } else {
-      rename_file($_, normaliz($_));
+## fix parameter missing
+if (!@ARGV) {
+  if ($opts{r}) {
+    opendir(my $dh, '.') || die "Unable to open current directory.";
+    while (readdir $dh) {
+      push @ARGV, $_ if (!/^\.\.?$/);
     }
+    closedir $dh;
+  } else {
+    print STDERR "File or -r option missing, nothing to do.\n" if (!$opts{q});
+    exit 8;
   }
 }
 
-################### FUNCTIONS ##################
+## loop on parameters
+for (@ARGV) {
+  do_job_on_filedir($_);
+}
 
+
+############################ FUNCTIONS #########################
+
+
+# recursively (if -r) do the job
+sub do_job_on_filedir {
+  my $filedir = shift;
+
+  print STDERR "\033[1;33mEntering\033[0;36m $filedir\033[1;33m...\033[0m\n" if (!$opts{q} and -d $filedir);
+  if (-d $filedir  and $opts{r}) {
+    opendir(my $dh, $filedir) || die "Can't open $filedir: $!";
+    while (readdir $dh) {
+      do_job_on_filedir(catfile($filedir, $_)) if (!/^\.\.?$/);
+    }
+    closedir $dh;
+  }
+  print STDERR "\033[33m Leaving\033[36m $filedir\033[33m...\033[0m\n" if (!$opts{q} and -d $filedir);
+  $filedir = rename_if_needed($filedir);
+}
+
+# do what the function name suggest..
+sub rename_if_needed {
+  my $original = canonpath(shift);
+
+  my ($old, $dir) = fileparse($original);
+  my $new = normaliz($old);
+
+  my $to = canonpath(catfile($dir, $new));
+
+  if ($original eq $to) {
+    return $original;
+  }
+
+  if (-e $to) {
+    print STDERR "\033[1;31mWARNING: ".
+      "cannot rename $original to $to: already exists.\033[0m\n";
+    return $original;
+  }
+
+  if (!$opts{q}) {
+    print STDERR "  \033[34m".$old.
+      "\033[33m -> \033[34m".canonpath($new)."\033[0m\n";
+  }
+
+  if (!$opts{n}) {
+    rename $original, $to || die "\033[31mUnable to rename $original to $to: $!\033[0m";
+  } else {
+    return $original;
+  }
+
+  return $to;
+}
+
+# split the file name and correct it.
 sub normaliz {
-  my $origin = shift;
+  my $original = shift;
 
-  my %parts = extract_filename_parts($origin);
-  my $title = remove_bad_ass($parts{title});
-  my $year = $parts{year};
-  my $imdbid = $parts{imdbid};
+  # extract filename parts
+  my ($file, $folder, $ext) = fileparse($original, qr/\.[^.]+$/);
 
-  # correcting case
-  $title = recase_string($title);
-
-  # set placeholder if any
-  if (defined $opts{Y} and !defined $year) {
-    $year = $opts{Y};
-  }
-  if (defined $opts{I} and !defined $imdbid) {
-    $imdbid = $opts{I};
+  if (-d $original) {
+    $file = fix_case(remove_bad_ass($file . $ext));
+  } else {
+    $file = fix_case(remove_bad_ass($file)) . $ext;
   }
 
-  # rebuild final filename
-  my $renamed = $parts{folder} . $title;
-  $renamed .= $opts{s} . 'part' . $parts{part} if (defined $parts{part});
-  $renamed .= $opts{d} . $year if (defined $year);
-  $renamed .= $opts{d} . $imdbid if (defined $imdbid);
-  $renamed .= $parts{ext};
 
-  return $renamed;
+  return catfile($folder, $file);
 }
 
 #########################
@@ -227,7 +267,7 @@ sub remove_bad_ass {
   print STDERR "remove_bad_ass:40: $_\n" if ($DEBUG);
 
   # some frequent patterns, all following text are 99% not part of the title
-  s/^(.+?)\b($ERASE_TOKENS)\b.*$/$1/ig while (/\b($ERASE_TOKENS)\b/i);
+  #s/^(.+?)\b($ERASE_TOKENS)\b.*$/$1/ig while (/\b($ERASE_TOKENS)\b/i);
   print STDERR "remove_bad_ass:50: $_\n" if ($DEBUG);
 
   # reduce multiple white space char
@@ -244,10 +284,10 @@ sub remove_bad_ass {
   print STDERR "remove_bad_ass:80: $_\n" if ($DEBUG);
 
   # if finished by .french or .fr or like, 99% chance that is the language
-  s/\b(french|
-      fr|
-      english|
-      en)$//ixg;
+  # s/\b(french|
+  #     fr|
+  #     english|
+  #     en)$//ixg;
   print STDERR "remove_bad_ass:90: $_\n" if ($DEBUG);
 
   # reduce multiple white space char
@@ -266,186 +306,15 @@ sub remove_bad_ass {
   return $_;
 }
 
-sub extract_filename_parts {
-  my $origin = shift;
-
-  # extract filename parts
-  my ($file, $folder, $ext) = fileparse($origin, qr/\.[^.]+$/);
-
-  my $title = $file;
-  my $year = undef;
-  my $imdbid = undef;
-  my $part = undef;
-
-  # find some part data
-  if ($title =~ /\b(cd|disk)(\d+)\b/i) {
-    $part = $2;
-  }
-
-  # extract title if filename is a std name
-  if ($title =~ /^(.*)_(\d{4})(_(\d+))?$/) {
-    $title = $1;
-    $year = $2;
-    $imdbid = $4;
-  } elsif ($title =~ /^(.*?)\D((19|20)\d{2})(\D.*|)$/) {
-    # non standard filename, extract title and year (if exists)
-    $year = $2;
-  }
-  return (folder => $folder,
-	  title => $title,
-	  year => $year,
-	  imdbid => $imdbid,
-	  part => $part,
-	  ext => lc $ext);
-}
-
-sub recase_string {
+sub fix_case {
   my $_ = shift;
-  print STDERR "recase_string:0: $_\n" if ($DEBUG);
 
   # case handling
-  if ($opts{c} and $opts{c} eq 'low') {
+  if ($opts{D}) {
     $_ = lc;
-  } elsif ($opts{c} and $opts{c} eq 'up') {
+  } elsif ($opts{U}) {
     $_ = uc;
-  } elsif ($opts{c} and $opts{c} eq 'camel') {
-    # CamelCase, dont upcase if only one letter in the token: «if (/..+/)»
-    $_ = join($opts{s},
-	      map {$_ = lc; $_ = (/..+/) ? ucfirst : $_ }
-	      split /[^$opts{w}]+/);
   }
-  print STDERR "recase_string:10: $_\n" if ($DEBUG);
 
   return $_;
-}
-
-
-sub rename_file {
-  my $from = shift;
-  my $to = shift;
-
-  my $bfrom = basename($from);
-  my $bto = basename($to);
-  return 1 if ($bfrom eq $bto);
-
-  my $dfrom = dirname($from);
-  my $dto = dirname($to);
-
-  if (-e $to) {
-    print STDERR "\033[1;31mWARNING\033[0m: ".
-      "cannot rename $from to $to: $to already exists.\n";
-    return 0;
-  }
-
-  if (!$opts{q}) {
-    if ($g_last_dir ne $dfrom and $dfrom eq $dto) {
-      $g_last_dir = $dfrom;
-      print STDERR "\033[33m*** in \033[34m$dfrom\033[33m ***\n";
-    }
-    if ($dfrom eq $dto) {
-      print STDERR "  \033[33mrenaming \033[34m".$bfrom.
-	"\033[33m to \033[36m".$bto."\033[0m\n";
-    } else {
-      print STDERR "\033[33mrenaming \033[34m".$from.
-	"\033[33m to \033[36m".$to."\033[0m\n";
-    }
-  }
-
-  if (!$opts{n}) {
-    return rename $from, $to;
-  } else {
-    return 1;
-  }
-}
-
-sub parse_list_from_stdin {
-  my @list;
-  #binmode(STDIN, ":encoding(utf8)");
-  while (<STDIN>) {
-    chomp;
-    push @list, $_;
-  }
-  return @list;
-}
-
-sub parse_filelist {
-  my @list;
-
-  if (@ARGV) {
-    for (@ARGV) {
-      if ($_ eq '-') {
-	push @list, parse_list_from_stdin();
-      } else {
-	push @list, $_;
-      }
-    }
-  } else {
-    push @list, '.';
-  }
-
-  return @list;
-}
-
-###########
-# callback for File::Find, used in recursive usage
-# put each file in the right list.
-sub divide_file {
-  push @flist, $File::Find::name if (-f);
-  push @dlist, $File::Find::name if (-d);
-}
-
-
-
-############################ aesthetic functions ###################
-sub version {
-  my $name = basename($0);
-  print <<EOF;
-Copyright (c) 2012, xakz <xakz\@sdf.lonestar.org>, All rights reserved.
-
-\033[1;37m$name\033[0m version \033[1;37m$VERSION\033[0m
-
-see source code for informations about copying.
-EOF
-
-}
-
-sub usage {
-  print <<EOF;
-
-SYNOPSIS
- normalizr [flags] [FILENAMES]
-
-DESCRIPTION
- this tool correct filenames, mainly movie filenames.
- Give filenames on the command-line or
- pipe filenames list, one by line.
-
- Mix filenames in stdin and on the command-line using
- “-” as filename in parameters.
-
- ex: find my_movies/news | normalizr 'The BOAT.avi' warrior.avi - bob.avi
-
- “-” will be replaced by the file list yield by find.
-
-OPTIONS
- -n             dry-run.
- -r             recursive.
- -q             be quiet.
- -f             Don't check if file exists.
-                Mainly usefull in print mode (-p).
- -p             Print mode: print modified filenames instead of rename files.
- -D             normaliz directory too (occur after files rename).
- -P             Remove content of parentheses pair (), [], {}, etc...
- -Y <year>      year placeholder if no year found.
- -I <imdb>      ImdbId placeholder if no id found.
- -c <case>      change case: none, up, low, camel (default: “none”, no change)
- -s <char>      white space and invalid characters (see -g) will be
-                converted to this character (default is “.”).
- -d <char>      character that delimit filename fields (default is “_”).
- -g <regex>     regex of valid (Good) chars. (default: “-a-zA-Z0-9”)
- -w <regex>     regex of what is a word (mainly used for CamelCasing)
-                (defaults: “-a-zA-Z0-9”
- -V             version info.
- -h             this help.
-EOF
 }
