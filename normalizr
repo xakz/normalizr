@@ -57,7 +57,7 @@ my %opts = (
 	    # character used for white space
 	    's' => '.',
 	    # valid char regex
-	    'g' => '-_a-zA-Z0-9\^\+!%@',
+	    'g' => '-a-zA-Z0-9\^\+%@',
 	    # word char regex, border of filename allow only these, and for CamelCasing too
 	    'w' => 'a-zA-Z0-9',
 	   );
@@ -164,32 +164,33 @@ sub do_job_on_filedir {
 
 # do what the function name suggest..
 sub rename_if_needed {
-  my $original = canonpath(shift);
+  my $from = canonpath(shift);
 
-  my ($old, $dir) = fileparse($original);
-  my $new = normaliz($old);
+  # normalize
+  my $to = canonpath(normaliz($from));
 
-  my $to = canonpath(catfile($dir, $new));
+  my ($short_from, $dir) = fileparse($from);
+  my ($short_to) = fileparse($to);
 
-  if ($original eq $to) {
-    return $original;
+  if ($from eq $to) {
+    return $from;
   }
 
   if (-e $to) {
     print STDERR "\033[1;31mWARNING: ".
-      "cannot rename $original to $to: already exists.\033[0m\n";
-    return $original;
+      "cannot rename $from to $to: already exists.\033[0m\n";
+    return $from;
   }
 
   if (!$opts{q}) {
-    print STDERR "  \033[34m".$old.
-      "\033[33m -> \033[34m".canonpath($new)."\033[0m\n";
+    print STDERR "  \033[34m".$short_from.
+      "\033[33m -> \033[34m".$short_to."\033[0m\n";
   }
 
   if (!$opts{n}) {
-    rename $original, $to || die "\033[31mUnable to rename $original to $to: $!\033[0m";
+    rename $from, $to || die "\033[31mUnable to rename $from to $to: $!\033[0m";
   } else {
-    return $original;
+    return $from;
   }
 
   return $to;
@@ -200,11 +201,15 @@ sub normaliz {
   my $original = shift;
 
   # extract filename parts
-  my ($file, $folder, $ext) = fileparse($original, qr/\.[^.]+$/);
+  my ($file, $folder, $ext);
 
   if (-d $original) {
-    $file = fix_case(remove_bad_ass($file . $ext));
+    print STDERR "$original is a directory.\n" if ($DEBUG);
+    ($file, $folder) = fileparse($original);
+    $file = fix_case(remove_bad_ass($file));
   } else {
+    print STDERR "$original is not a directory.\n" if ($DEBUG);
+    ($file, $folder, $ext) = fileparse($original, qr/\.[^.]+$/);
     $file = fix_case(remove_bad_ass($file)) . $ext;
   }
 
