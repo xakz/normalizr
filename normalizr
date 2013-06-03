@@ -57,7 +57,7 @@ my %opts = (
 	    # character used for white space
 	    's' => '.',
 	    # valid char regex
-	    'g' => '-a-zA-Z0-9\^\+%@',
+	    'g' => '-a-zA-Z0-9_^+%@',
 	    # word char regex, border of filename allow only these, and for CamelCasing too
 	    'w' => 'a-zA-Z0-9',
 	   );
