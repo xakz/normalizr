@@ -44,7 +44,7 @@ use File::Basename;
 
 ####### constants #######
 my $DEBUG = 0;
-my $VERSION = '0.7';
+my $VERSION = '0.7.1';
 
 # my $ERASE_TOKENS = 'dvdrip|divx|scr|truefrench|hdrip|xvid|ts|brrip|'.
 #   'md|bdrip|repack|1cd|vf|vo|vostfr|vostr|vfstfr|vostfr|fr|cd\d+|disk\d+|'.
@@ -224,8 +224,8 @@ sub normaliz {
 # remaining invalid char replaced by white space char (opt -s).
 # and some other cleanup...
 sub remove_bad_ass {
-  my $_ = shift;
-  print STDERR "remove_bad_ass:0: $_\n" if ($DEBUG);
+  my $fn = shift;
+  print STDERR "remove_bad_ass:0: $fn\n" if ($DEBUG);
 
   if ($opts{P}) {
     # text in braces are 99% useless
@@ -237,89 +237,89 @@ sub remove_bad_ass {
 	       qr/‘[^’]*’/,
 	      );
     foreach my $re (@reb) {
-      s/$re//g while (m/$re/);
+      $fn =~ s/$re//g while ($fn =~ m/$re/);
     }
-    print STDERR "remove_bad_ass:10: $_\n" if ($DEBUG);
+    print STDERR "remove_bad_ass:10: $fn\n" if ($DEBUG);
   }
 
   # ASCII only
-  s/\351/é/g;
-  s/\350/è/g;
-  s/é|ê|è|ë/e/g;
-  s/á|â|à|ă|ä|å/a/g;
-  s/í|î|ì|ĩ|ï/i/g;
-  s/ó|ô|ò|õ|ö|ð/o/g;
-  s/ú|û|ù|ũ|ü/u/g;
-  s/ý|ŷ|ỳ|ỹ|ÿ/y/g;
-  y/ßŋħĸł¢µçñ/sghklcmcn/;
-  s/œ/oe/g;
-  s/æ/ae/g;
-  print STDERR "remove_bad_ass:20: $_\n" if ($DEBUG);
+  $fn =~ s/\351/é/g;
+  $fn =~ s/\350/è/g;
+  $fn =~ s/é|ê|è|ë/e/g;
+  $fn =~ s/á|â|à|ă|ä|å/a/g;
+  $fn =~ s/í|î|ì|ĩ|ï/i/g;
+  $fn =~ s/ó|ô|ò|õ|ö|ð/o/g;
+  $fn =~ s/ú|û|ù|ũ|ü/u/g;
+  $fn =~ s/ý|ŷ|ỳ|ỹ|ÿ/y/g;
+  $fn =~ y/ßŋħĸł¢µçñ/sghklcmcn/;
+  $fn =~ s/œ/oe/g;
+  $fn =~ s/æ/ae/g;
+  print STDERR "remove_bad_ass:20: $fn\n" if ($DEBUG);
 
-  s/É|Ê|È|Ë/E/g;
-  s/Á|Â|À|Ă|Ä|Å/A/g;
-  s/Í|Î|Ì|Ĩ|Ï/I/g;
-  s/Ó|Ô|Ò|Õ|Ö|Ð/O/g;
-  s/Ú|Û|Ù|Ũ|Ü/U/g;
-  s/Ý|Ŷ|Ỳ|Ỹ|ÿ/Y/g;
-  y/ßŊĦĸŁ¢µÇÑ/SGHKLCMCN/;
-  s/Œ/OE/g;
-  s/Æ/AE/g;
-  print STDERR "remove_bad_ass:30: $_\n" if ($DEBUG);
+  $fn =~ s/É|Ê|È|Ë/E/g;
+  $fn =~ s/Á|Â|À|Ă|Ä|Å/A/g;
+  $fn =~ s/Í|Î|Ì|Ĩ|Ï/I/g;
+  $fn =~ s/Ó|Ô|Ò|Õ|Ö|Ð/O/g;
+  $fn =~ s/Ú|Û|Ù|Ũ|Ü/U/g;
+  $fn =~ s/Ý|Ŷ|Ỳ|Ỹ|ÿ/Y/g;
+  $fn =~ y/ßŊĦĸŁ¢µÇÑ/SGHKLCMCN/;
+  $fn =~ s/Œ/OE/g;
+  $fn =~ s/Æ/AE/g;
+  print STDERR "remove_bad_ass:30: $fn\n" if ($DEBUG);
 
   # replace remaining invalid chars with white space char
-  s/[^$opts{g}]+/$opts{s}/g;
-  print STDERR "remove_bad_ass:40: $_\n" if ($DEBUG);
+  $fn =~ s/[^$opts{g}]+/$opts{s}/g;
+  print STDERR "remove_bad_ass:40: $fn\n" if ($DEBUG);
 
   # some frequent patterns, all following text are 99% not part of the title
-  #s/^(.+?)\b($ERASE_TOKENS)\b.*$/$1/ig while (/\b($ERASE_TOKENS)\b/i);
-  print STDERR "remove_bad_ass:50: $_\n" if ($DEBUG);
+  #$fn =~ s/^(.+?)\b($ERASE_TOKENS)\b.*$/$1/ig while (/\b($ERASE_TOKENS)\b/i);
+  print STDERR "remove_bad_ass:50: $fn\n" if ($DEBUG);
 
   # reduce multiple white space char
-  s/[$opts{s}]+/$opts{s}/g;
-  print STDERR "remove_bad_ass:60: $_\n" if ($DEBUG);
+  $fn =~ s/[$opts{s}]+/$opts{s}/g;
+  print STDERR "remove_bad_ass:60: $fn\n" if ($DEBUG);
 
   # remove '.-.' pattern and derived
-  s/([$opts{s}]-[$opts{s}]?|-[$opts{s}])/$opts{s}/g;
-  print STDERR "remove_bad_ass:70: $_\n" if ($DEBUG);
+  $fn =~ s/([$opts{s}]-[$opts{s}]?|-[$opts{s}])/$opts{s}/g;
+  print STDERR "remove_bad_ass:70: $fn\n" if ($DEBUG);
 
   # remove trailing or prefix dots or dash
-  s/^([$opts{s}]|-)+//;
-  s/([$opts{s}]|-)+$//;
-  print STDERR "remove_bad_ass:80: $_\n" if ($DEBUG);
+  $fn =~ s/^([$opts{s}]|-)+//;
+  $fn =~ s/([$opts{s}]|-)+$//;
+  print STDERR "remove_bad_ass:80: $fn\n" if ($DEBUG);
 
   # if finished by .french or .fr or like, 99% chance that is the language
-  # s/\b(french|
+  # $fn =~ s/\b(french|
   #     fr|
   #     english|
   #     en)$//ixg;
-  print STDERR "remove_bad_ass:90: $_\n" if ($DEBUG);
+  print STDERR "remove_bad_ass:90: $fn\n" if ($DEBUG);
 
   # reduce multiple white space char
-  s/[$opts{s}]+/$opts{s}/g;
-  print STDERR "remove_bad_ass:60: $_\n" if ($DEBUG);
+  $fn =~ s/[$opts{s}]+/$opts{s}/g;
+  print STDERR "remove_bad_ass:60: $fn\n" if ($DEBUG);
 
   # remove '.-.' pattern and derived
-  s/([$opts{s}]-[$opts{s}]?|-[$opts{s}])/$opts{s}/g;
-  print STDERR "remove_bad_ass:70: $_\n" if ($DEBUG);
+  $fn =~ s/([$opts{s}]-[$opts{s}]?|-[$opts{s}])/$opts{s}/g;
+  print STDERR "remove_bad_ass:70: $fn\n" if ($DEBUG);
 
   # remove trailing or prefix dots or dash
-  s/^([$opts{s}]|-)+//;
-  s/([$opts{s}]|-)+$//;
-  print STDERR "remove_bad_ass:80: $_\n" if ($DEBUG);
+  $fn =~ s/^([$opts{s}]|-)+//;
+  $fn =~ s/([$opts{s}]|-)+$//;
+  print STDERR "remove_bad_ass:80: $fn\n" if ($DEBUG);
 
-  return $_;
+  return $fn;
 }
 
 sub fix_case {
-  my $_ = shift;
+  my $fn = shift;
 
   # case handling
   if ($opts{D}) {
-    $_ = lc;
+    $fn = lc $fn;
   } elsif ($opts{U}) {
-    $_ = uc;
+    $fn = uc $fn;
   }
 
-  return $_;
+  return $fn;
 }
