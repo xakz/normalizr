@@ -1,0 +1,11 @@
+
+I was tired to escape character when I use the terminal (my main tool), so I
+wrote this piece of software to normalize my filenames.
+
+It replaces non ASCII characters to ASCII equivalents or by a filling
+letter. Also, it removes characters that need to be escaped in your favorite
+terminal emulator. It can also remove parentheses pairs with or without their
+content.
+
+Other normalizing features are planned like CamelCasing, removing of useless
+words commonly found in downloaded filenames.
